@@ -1,5 +1,6 @@
 # Smart Potency Anticipation by Relative Thermodynamics Analysis
 #
+# EXPERIMENTAL ! 
 # @author: Julien Michel November 2016
 #
 from Sire.IO import *
