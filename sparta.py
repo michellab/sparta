@@ -225,29 +225,29 @@ def setupForceFieldsFreeEnergy(system, space, cutoff_type=None,
 
     solvent = system[MGName("solvent")]
 
-    all = system[MGName("all")]
+    #all = system[MGName("all")]
 
     # ''solvent'' is actually every molecule that isn't perturbed !
-    solvent_intraff = InternalFF("solvent_intraff")
-    solvent_intraff.add(solvent)
+    #solvent_intraff = InternalFF("solvent_intraff")
+    #solvent_intraff.add(solvent)
 
     # Solute bond, angle, dihedral energy
     solute_intraff = InternalFF("solute_intraff")
     solute_intraff.add(solute)
 
     # Solvent-solvent coulomb/LJ (CLJ) energy
-    solventff = InterCLJFF("solvent:solvent")
-    if (cutoff_type.val != "nocutoff"):
-        solventff.setUseReactionField(True)
-        solventff.setReactionFieldDielectric(rf_dielectric.val)
-    solventff.add(solvent)
+    #solventff = InterCLJFF("solvent:solvent")
+    #if (cutoff_type.val != "nocutoff"):
+    #    solventff.setUseReactionField(True)
+    #    solventff.setReactionFieldDielectric(rf_dielectric.val)
+    #solventff.add(solvent)
 
     #Solvent intramolecular CLJ energy
-    solvent_intraclj = IntraCLJFF("solvent_intraclj")
-    if (cutoff_type.val != "nocutoff"):
-        solvent_intraclj.setUseReactionField(True)
-        solvent_intraclj.setReactionFieldDielectric(rf_dielectric.val)
-    solvent_intraclj.add(solvent)
+    #solvent_intraclj = IntraCLJFF("solvent_intraclj")
+    #if (cutoff_type.val != "nocutoff"):
+    #    solvent_intraclj.setUseReactionField(True)
+    #    solvent_intraclj.setReactionFieldDielectric(rf_dielectric.val)
+    #solvent_intraclj.add(solvent)
 
     # Solute intramolecular CLJ energy
     solute_hard_intraclj = IntraCLJFF("solute_hard_intraclj")
@@ -327,9 +327,10 @@ def setupForceFieldsFreeEnergy(system, space, cutoff_type=None,
                    solute_hard_intraclj, solute_todummy_intraclj, solute_fromdummy_intraclj,
                    solute_hard_todummy_intraclj, solute_hard_fromdummy_intraclj,
                    solute_todummy_fromdummy_intraclj,
-                   solvent_intraff,
-                   solventff, solvent_intraclj,
                    solute_hard_solventff, solute_todummy_solventff, solute_fromdummy_solventff]
+                   #solvent_intraff,
+                   #solventff, solvent_intraclj,
+
 
 
     for forcefield in forcefields:
@@ -349,14 +350,13 @@ def setupForceFieldsFreeEnergy(system, space, cutoff_type=None,
     # TOTAL
     total_nrg = solute_intraff.components().total() + solute_hard_intraclj.components().total() + \
                 solute_todummy_intraclj.components().total(0) + solute_fromdummy_intraclj.components().total(0) + \
-                solute_hard_todummy_intraclj.components().total(
-                    0) + solute_hard_fromdummy_intraclj.components().total(0) + \
+                solute_hard_todummy_intraclj.components().total(0) + solute_hard_fromdummy_intraclj.components().total(0) + \
                 solute_todummy_fromdummy_intraclj.components().total(0) + \
-                solvent_intraff.components().total() + solventff.components().total() + \
-                solvent_intraclj.components().total() + \
                 solute_hard_solventff.components().total() + \
                 solute_todummy_solventff.components().total(0) + \
                 solute_fromdummy_solventff.components().total(0)
+                #solvent_intraff.components().total() + solventff.components().total() + \
+                #solvent_intraclj.components().total()
 
     e_total = system.totalComponent()
 
@@ -366,7 +366,7 @@ def setupForceFieldsFreeEnergy(system, space, cutoff_type=None,
 
     system.setConstant(lam, 0.0)
 
-    system.add(PerturbationConstraint(solutes))
+    #system.add(PerturbationConstraint(solutes))
 
     # NON BONDED Alpha constraints for the soft force fields
 
@@ -468,6 +468,7 @@ def estimateDG(topfile=None,crdfile=None,pertfile=None,
                                         combining_rules=combining_rules,
                                         lambda_val=lambda_val)
     # Load ligands library
+    # FIX ME ! Don't include ligands that have already been simulated !
     library = loadLibrary(librarypath)
     library_deltaenergies = {}
     # library_deltaenergies contain the list of computed energy differences
@@ -476,7 +477,7 @@ def estimateDG(topfile=None,crdfile=None,pertfile=None,
     #import pdb; pdb.set_trace()
     # Now scan trajectory
     start_frame = 1
-    end_frame = 1000000
+    end_frame = 3
     step_frame = 1
 
     trajfile = Parameter(".",trajfile,""".""")
@@ -487,22 +488,69 @@ def estimateDG(topfile=None,crdfile=None,pertfile=None,
     mdtraj_trajfile.seek(start_frame)
     current_frame = start_frame
 
+    energies = {}
+    for (ID, ligand) in library:
+        energies[ID] = []
     while (current_frame <= end_frame):
         print ("#Processing frame %s " % current_frame)
         frames_xyz, cell_lengths, cell_angles = mdtraj_trajfile.read(n_frames=1)
         system = updateSystemfromTraj(system, frames_xyz, cell_lengths, cell_angles)
+        ref_ligand = system[MGName("solutes")].molecules().first().molecule()
         ref_nrg = system.energy()
         print (ref_nrg)
-        for ligand in library:
+        for (ID, ligand) in library:
             # Align ligand onto reference ligand
+            mapping = AtomMCSMatcher(1*second).match(ref_ligand, PropertyMap(), ligand, PropertyMap())
+            mapper = AtomResultMatcher(mapping)
+            # This does a RB alignment
+            # TODO) Explore optimised alignment codes
+            # For instance could construct aligned ligand by reusing MCSS coordinates
+            # and completing topology for variable part using BAT internal coordinates
+            # Also, better otherwise never get intramolecular energy variations !
+            # Basic test...SAME LIGAND should give 0 energy difference ! 
+            # FIXME) Return multiple coordinates and update system in each instance
+            aligned_ligand = ligand.move().align(ref_ligand, AtomMatchInverter(mapper))
+            #print (ref_ligand.property("coordinates").toVector())
+            #print ("####")
+            #print (aligned_ligand.property("coordinates").toVector())
+            # FIXME) Optimise for speed
+            new_system = System()
+            new_space = system.property("space")
+            new_system.add( system[MGName("solvent")] )
+            sols = MoleculeGroup("solutes")
+            solref = MoleculeGroup("solute_ref")
+            solhard = MoleculeGroup("solute_ref_hard")
+            soltodummy = MoleculeGroup("solute_ref_todummy")
+            solfromdummy = MoleculeGroup("solute_ref_fromdummy")
+            sols.add(aligned_ligand)
+            solref.add(aligned_ligand)
+            solhard.add(aligned_ligand)
+            new_system.add(sols)
+            new_system.add(solref)
+            new_system.add(solhard)
+            new_system.add(soltodummy)
+            new_system.add(solfromdummy)
+            #print ("###")
+            # DONE) Optimise for speed, only doing ligand energies
+            #print (new_system[MGName("solutes")].first().molecule().property("coordinates").toVector())
+            new_system = setupForceFieldsFreeEnergy(new_system, new_space, cutoff_type=cutoff_type,
+                                        cutoff_dist=cutoff_dist,
+                                        rf_dielectric=rf_dielectric,
+                                        shift_delta=shift_delta,
+                                        coulomb_power=coulomb_power,
+                                        combining_rules=combining_rules,
+                                        lambda_val=lambda_val)
+            new_nrg = new_system.energy()
+            print (new_nrg)
+            energies[ID].append( new_nrg - ref_nrg )
             # for each conformation generated
             #     consider further optimisation (rapid MC --> if loaded flex files?)
             #     update 'perturbed' group with aligned ligand coordinates
             #     compute 'perturbed' energy
             #     accumulate 'perturbed' - reference
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
         current_frame += step_frame
-
+    import pdb; pdb.set_trace()
     # Now convert accumulated data int
 
     return 0
